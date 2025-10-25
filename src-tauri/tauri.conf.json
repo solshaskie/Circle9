@@ -1,0 +1,84 @@
+{
+	"package": {
+		"productName": "Circle9",
+		"version": "0.4.0"
+	},
+	"build": {
+		"distDir": "../out/src",
+		"devPath": "http://localhost:8080",
+		"beforeDevCommand": "",
+		"beforeBuildCommand": "",
+		"withGlobalTauri": true
+	},
+	"tauri": {
+		"macOSPrivateApi": true,
+		"bundle": {
+			"active": true,
+			"targets": "all",
+			"identifier": "com.circle9.app",
+			"icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+			"resources": ["../Circle9.json"],
+			"externalBin": [],
+			"copyright": "Apache-2.0",
+			"category": "DeveloperTool",
+			"shortDescription": "Windows-Linux File Bridge",
+			"longDescription": "Circle9 provides seamless file management between Windows and Linux systems via SSH/SFTP",
+			"deb": {
+				"depends": []
+			},
+			"macOS": {
+				"frameworks": [],
+				"minimumSystemVersion": "",
+				"exceptionDomain": "",
+				"signingIdentity": null,
+				"entitlements": null,
+				"license": "../LICENSE"
+			},
+			"windows": {
+				"certificateThumbprint": null,
+				"digestAlgorithm": "sha256",
+				"timestampUrl": "",
+				"wix": {
+					"template": "./installer.wxs",
+					"license": "../LICENSE"
+				}
+			}
+		},
+		"updater": {
+			"active": false
+		},
+		"allowlist": {
+			"all": true,
+			"fs": {
+				"all": true,
+				"copyFile": true,
+				"createDir": true,
+				"readDir": true,
+				"removeDir": true,
+				"removeFile": true,
+				"renameFile": true,
+				"writeFile": true
+			},
+			"protocol": {
+				"all": true,
+				"asset": true,
+				"assetScope": ["*"]
+			}
+		},
+		"windows": [
+			{
+				"title": "Circle9",
+				"width": 1200,
+				"height": 800,
+				"minWidth": 800,
+				"minHeight": 600,
+				"resizable": true,
+				"fullscreen": false,
+				"transparent": true
+			}
+		],
+		"security": {
+			"csp": null
+		}
+	}
+}
