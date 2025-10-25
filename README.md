@@ -7,7 +7,11 @@
 [![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)](#)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](#)
 [![Tauri](https://img.shields.io/badge/Tauri-FFC131?style=flat&logo=tauri&logoColor=black)](#)
-[![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](#license)
+
+[![Stars](https://img.shields.io/github/stars/solshaskie/Circle9?style=social)](https://github.com/solshaskie/Circle9)
+[![Issues](https://img.shields.io/github/issues/solshaskie/Circle9)](https://github.com/solshaskie/Circle9/issues)
+[![Discussions](https://img.shields.io/github/discussions/solshaskie/Circle9)](https://github.com/solshaskie/Circle9/discussions)
+[![Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **Bridging the Windows-Linux gap for developers who learn by doing**
 
@@ -224,6 +228,23 @@ npm run dev  # Hot reload development
 
 ### **Target Audience Input Welcome**
 Are you a Windows developer struggling with Linux deployment? Your perspective is invaluable for making Crossplatform development more accessible.
+
+## 🆘 **Need Help?**
+
+Got questions or feedback? Here's where the Circle9 community hangs out:
+
+### **Community Support**
+- 💬 [**GitHub Discussions**](https://github.com/solshaskie/Circle9/discussions) - Ask questions, share tips, discuss features
+- 🐛 [**GitHub Issues**](https://github.com/solshaskie/Circle9/issues) - Report bugs or request features
+- 📧 **Email Support** - sol@your-domain.com (for direct developer support)
+
+### **Quick Help Topics**
+- [SSH Setup Guide](BUILD_INSTRUCTIONS.md#ssh-setup)
+- [Troubleshooting](BUILD_INSTRUCTIONS.md#troubleshooting)
+- [Cross-Platform Development Tips](#cross-platform-development-tips)
+- [Learning Linux Commands](#the-learning-experience)
+
+**🎓 Share your Windows-to-Linux journey!** Your experiences help make Circle9 better for the next developer.
 
 ## 📋 **Roadmap**
 
