@@ -150,7 +150,7 @@ class TransferQueueManager {
 
         // Update status bar
         const statusBar = document.getElementById('status-bar');
-        if (statusBar) {
+        if (statusBar && statusBar instanceof HTMLElement) {
             statusBar.textContent = `Transferring ${progress.filename}: ${Math.round(progress.percentage)}%`;
         }
     }

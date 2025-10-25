@@ -30,10 +30,16 @@ class SSHStateManager {
         // Listen for SSH connection events
         listen('ssh-connected', (event) => {
             console.log('SSH connected:', event.payload);
+            // Update state if needed
         });
 
         listen('ssh-disconnected', (event) => {
-            console.log('SSH disconnected:', event.payload);
+            const connectionId = event.payload as string;
+            console.log('SSH disconnected:', connectionId);
+            this.connections.delete(connectionId);
+            if (this.currentConnection === connectionId) {
+                this.currentConnection = null;
+            }
         });
     }
 

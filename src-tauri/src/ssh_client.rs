@@ -7,6 +7,8 @@ use tokio::time::interval;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tauri::AppHandle;
+use once_cell::sync::OnceCell;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SSHConfig {
@@ -28,13 +30,15 @@ pub struct SSHConnection {
 pub struct SSHClient {
     connections: Arc<Mutex<HashMap<String, SSHConnection>>>,
     keepalive_interval: Duration,
+    app_handle: Arc<AppHandle>,
 }
 
 impl SSHClient {
-    pub fn new() -> Self {
+    pub fn new(app_handle: Arc<AppHandle>) -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
             keepalive_interval: Duration::from_secs(60),
+            app_handle,
         }
     }
 
@@ -43,7 +47,8 @@ impl SSHClient {
         
         // Check if connection already exists
         {
-            let connections = self.connections.lock().unwrap();
+            let connections = self.connections.lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
             if connections.contains_key(&connection_id) {
                 return Ok(connection_id);
             }
@@ -89,8 +94,14 @@ impl SSHClient {
 
         // Store connection
         {
-            let mut connections = self.connections.lock().unwrap();
+            let mut connections = self.connections.lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
             connections.insert(connection_id.clone(), connection);
+        }
+
+        // Emit connected event
+        if let Err(e) = self.app_handle.emit_all("ssh-connected", &connection_id) {
+            eprintln!("Failed to emit ssh-connected: {}", e);
         }
 
         // Start keepalive for this connection
@@ -100,7 +111,9 @@ impl SSHClient {
     }
 
     pub fn get_connection(&self, connection_id: &str) -> Option<SSHConnection> {
-        let mut connections = self.connections.lock().unwrap();
+        let mut connections = self.connections.lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))
+            .unwrap();
         if let Some(conn) = connections.get_mut(connection_id) {
             conn.last_activity = Instant::now();
             Some(conn.clone())
@@ -110,8 +123,15 @@ impl SSHClient {
     }
 
     pub fn disconnect(&self, connection_id: &str) {
-        let mut connections = self.connections.lock().unwrap();
+        let mut connections = self.connections.lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))
+            .unwrap();
         connections.remove(connection_id);
+
+        // Emit disconnect event
+        if let Err(e) = self.app_handle.emit_all("ssh-disconnected", connection_id) {
+            eprintln!("Failed to emit ssh-disconnected: {}", e);
+        }
     }
 
     async fn start_keepalive(&self, connection_id: String) {
@@ -124,7 +144,8 @@ impl SSHClient {
                 interval.tick().await;
                 
                 let should_disconnect = {
-                    let mut connections = connections.lock().unwrap();
+                    let mut connections = connections.lock()
+                        .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
                     if let Some(conn) = connections.get(&connection_id) {
                         // Check if connection is stale (no activity for 5 minutes)
                         conn.last_activity.elapsed() > Duration::from_secs(300)
@@ -134,12 +155,16 @@ impl SSHClient {
                 };
 
                 if should_disconnect {
-                    connections.lock().unwrap().remove(&connection_id);
+                    connections.lock()
+                        .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
+                        .remove(&connection_id);
                     break;
                 }
 
                 // Send keepalive
-                if let Some(conn) = connections.lock().unwrap().get_mut(&connection_id) {
+                if let Some(conn) = connections.lock()
+                    .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?
+                    .get_mut(&connection_id) {
                     // SSH keepalive is handled automatically by the ssh2 library
                     conn.last_activity = Instant::now();
                 }
@@ -148,12 +173,16 @@ impl SSHClient {
     }
 
     pub fn is_connected(&self, connection_id: &str) -> bool {
-        let connections = self.connections.lock().unwrap();
+        let connections = self.connections.lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))
+            .unwrap();
         connections.contains_key(connection_id)
     }
 
     pub fn list_connections(&self) -> Vec<String> {
-        let connections = self.connections.lock().unwrap();
+        let connections = self.connections.lock()
+            .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))
+            .unwrap();
         connections.keys().cloned().collect()
     }
 }
@@ -165,6 +194,4 @@ impl Default for SSHClient {
 }
 
 // Global SSH client instance
-lazy_static::lazy_static! {
-    pub static ref SSH_CLIENT: SSHClient = SSHClient::new();
-}
+static SSH_CLIENT: OnceCell<SSHClient> = OnceCell::new();

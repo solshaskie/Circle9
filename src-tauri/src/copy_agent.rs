@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use tokio::sync::mpsc;
+use tauri::AppHandle;
+use once_cell::sync::OnceCell;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferTask {
@@ -51,16 +54,21 @@ pub struct TransferProgress {
 
 pub struct CopyAgent {
     active_transfers: Arc<Mutex<HashMap<String, TransferTask>>>,
-    transfer_queue: Arc<Mutex<Vec<String>>>, // Queue of task IDs
     max_concurrent_transfers: usize,
+    sender: mpsc::UnboundedSender<String>,
+    receiver: mpsc::UnboundedReceiver<String>,
+    app_handle: Arc<AppHandle>,
 }
 
 impl CopyAgent {
-    pub fn new() -> Self {
+    pub fn new(app_handle: Arc<AppHandle>) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
         Self {
             active_transfers: Arc::new(Mutex::new(HashMap::new())),
-            transfer_queue: Arc::new(Mutex::new(Vec::new())),
             max_concurrent_transfers: 3,
+            sender,
+            receiver,
+            app_handle,
         }
     }
 
@@ -89,13 +97,14 @@ impl CopyAgent {
         };
 
         {
-            let mut transfers = self.active_transfers.lock().unwrap();
+            let mut transfers = self.active_transfers.lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
             transfers.insert(task_id.clone(), task);
         }
 
-        {
-            let mut queue = self.transfer_queue.lock().unwrap();
-            queue.push(task_id.clone());
+        // Send to queue
+        if let Err(_) = self.sender.send(task_id.clone()) {
+            return Err(anyhow::anyhow!("Failed to queue transfer task"));
         }
 
         Ok(task_id)
@@ -104,33 +113,30 @@ impl CopyAgent {
     /// Start processing the transfer queue
     pub async fn process_queue(&self) -> Result<()> {
         loop {
+            // Wait for a new task
+            let task_id = self.receiver.recv().await
+                .ok_or_else(|| anyhow::anyhow!("Channel closed"))?;
+
             let current_transfers = {
-                let transfers = self.active_transfers.lock().unwrap();
+                let transfers = self.active_transfers.lock()
+                    .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
                 transfers.values()
                     .filter(|t| matches!(t.status, TransferStatus::InProgress))
                     .count()
             };
 
             if current_transfers < self.max_concurrent_transfers {
-                if let Some(task_id) = self.get_next_queued_task() {
-                    self.start_transfer(task_id).await?;
-                }
+                self.start_transfer(task_id).await?;
             }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }
 
-    /// Get the next task from the queue
-    fn get_next_queued_task(&self) -> Option<String> {
-        let mut queue = self.transfer_queue.lock().unwrap();
-        queue.pop()
-    }
 
     /// Start a transfer task
     async fn start_transfer(&self, task_id: String) -> Result<()> {
         let mut task = {
-            let mut transfers = self.active_transfers.lock().unwrap();
+            let mut transfers = self.active_transfers.lock()
+                .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
             transfers.get_mut(&task_id).cloned()
         };
 
@@ -139,7 +145,8 @@ impl CopyAgent {
             task.started_at = Some(Utc::now());
 
             {
-                let mut transfers = self.active_transfers.lock().unwrap();
+                let mut transfers = self.active_transfers.lock()
+                    .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
                 transfers.insert(task_id.clone(), task.clone());
             }
 
@@ -155,7 +162,8 @@ impl CopyAgent {
 
             // Update task status
             {
-                let mut transfers = self.active_transfers.lock().unwrap();
+                let mut transfers = self.active_transfers.lock()
+                    .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
                 if let Some(task) = transfers.get_mut(&task_id) {
                     match result {
                         Ok(_) => {
@@ -217,7 +225,8 @@ impl CopyAgent {
 
             // Update task progress
             {
-                let mut transfers = self.active_transfers.lock().unwrap();
+                let mut transfers = self.active_transfers.lock()
+                    .map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
                 if let Some(task) = transfers.get_mut(&task.id) {
                     task.transferred_bytes = transferred;
                 }
@@ -239,8 +248,10 @@ impl CopyAgent {
                 estimated_remaining_secs: estimated_remaining,
             };
 
-            // Here you would emit the progress event to the frontend
-            // app_handle.emit_all("transfer_progress", &progress)?;
+            // Emit the progress event to the frontend
+            if let Err(e) = self.app_handle.emit_all("transfer_progress", &progress) {
+                eprintln!("Failed to emit transfer progress: {}", e);
+            }
         }
 
         writer.flush()?;
@@ -326,9 +337,7 @@ impl CopyAgent {
 }
 
 // Global copy agent instance
-lazy_static::lazy_static! {
-    pub static ref COPY_AGENT: CopyAgent = CopyAgent::new();
-}
+static COPY_AGENT: OnceCell<CopyAgent> = OnceCell::new();
 
 // Tauri commands for copy operations
 
@@ -344,28 +353,28 @@ pub async fn create_transfer_task(
         _ => return Err("Invalid direction".to_string()),
     };
 
-    COPY_AGENT.create_transfer_task(source_path, dest_path, direction)
+    COPY_AGENT.get().unwrap().create_transfer_task(source_path, dest_path, direction)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_transfer_progress(task_id: String) -> Result<Option<TransferProgress>, String> {
-    Ok(COPY_AGENT.get_transfer_progress(&task_id))
+    Ok(COPY_AGENT.get().unwrap().get_transfer_progress(&task_id))
 }
 
 #[tauri::command]
 pub async fn get_active_transfers() -> Result<Vec<TransferTask>, String> {
-    Ok(COPY_AGENT.get_active_transfers())
+    Ok(COPY_AGENT.get().unwrap().get_active_transfers())
 }
 
 #[tauri::command]
 pub async fn cancel_transfer(task_id: String) -> Result<(), String> {
-    COPY_AGENT.cancel_transfer(&task_id)
+    COPY_AGENT.get().unwrap().cancel_transfer(&task_id)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn retry_transfer(task_id: String) -> Result<(), String> {
-    COPY_AGENT.retry_transfer(&task_id)
+    COPY_AGENT.get().unwrap().retry_transfer(&task_id)
         .map_err(|e| e.to_string())
 }

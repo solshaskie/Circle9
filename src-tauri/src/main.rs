@@ -13,6 +13,7 @@ mod audit_log;
 use clap::{Arg, ArgMatches, Command as ClapCommand};
 use std::env;
 use tauri::Manager;
+use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -52,17 +53,29 @@ lazy_static::lazy_static! {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let window = app.get_window("main").unwrap();
-            
+            let window = app.get_window("main")
+                .ok_or_else(|| "Main window not found".to_string())?;
+
             #[cfg(not(target_os = "linux"))]
             {
-                set_shadow(&window, true).unwrap();
+                if let Err(e) = set_shadow(&window, true) {
+                    eprintln!("Failed to set window shadow: {}", e);
+                }
             }
+
+            // Initialize copy agent and SSH client
+            let app_handle = Arc::new(app.handle());
+            copy_agent::COPY_AGENT.set(copy_agent::CopyAgent::new(app_handle.clone()))
+                .map_err(|_| "Failed to initialize copy agent")?;
+            ssh_client::SSH_CLIENT.set(ssh_client::SSHClient::new(app_handle))
+                .map_err(|_| "Failed to initialize SSH client")?;
 
             // Initialize SSH client
             tokio::spawn(async {
                 // Start the copy agent queue processor
-                copy_agent::COPY_AGENT.process_queue().await.unwrap();
+                if let Err(e) = copy_agent::COPY_AGENT.get().unwrap().process_queue().await {
+                    eprintln!("Copy agent queue processor failed: {}", e);
+                }
             });
 
             Ok(())
