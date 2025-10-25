@@ -1,10 +1,11 @@
-use crate::ssh_client::{SSH_CLIENT, SSHConfig};
+use crate::ssh_client::{SSHClient, SSHConfig};
 use ssh2::{FileType, Permissions};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
-use anyhow::{Result, Context};
+use crate::error::{Circle9Error, Result};
 use std::time::SystemTime;
 use chrono::{DateTime, Utc};
+use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinuxFileInfo {
@@ -30,14 +31,14 @@ pub struct TransferProgress {
 // Tauri commands for Linux file operations
 
 fn validate_path(path: &str) -> Result<(), String> {
-    if path.contains("..") || path.starts_with("/") || path.contains("\\") {
-        return Err("Invalid path: path traversal not allowed".to_string());
-    }
+    crate::utils::validate_path(path)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn connect_ssh(
+    ssh_client: State<'_, SSHClient>,
     host: String,
     port: u16,
     username: String,
@@ -52,22 +53,28 @@ pub async fn connect_ssh(
         password,
     };
 
-    match SSH_CLIENT.get().unwrap().connect(config).await {
-        Ok(connection_id) => Ok(connection_id),
-        Err(e) => Err(format!("Failed to connect: {}", e)),
-    }
+    ssh_client.connect(config).await
+        .map(|id| id.as_str().to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn disconnect_ssh(connection_id: String) -> Result<(), String> {
-    SSH_CLIENT.get().unwrap().disconnect(&connection_id);
+pub async fn disconnect_ssh(
+    ssh_client: State<'_, SSHClient>,
+    connection_id: String
+) -> Result<(), String> {
+    ssh_client.disconnect(&connection_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn list_linux_dir(connection_id: String, path: String) -> Result<Vec<LinuxFileInfo>, String> {
+pub async fn list_linux_dir(
+    ssh_client: State<'_, SSHClient>,
+    connection_id: String, 
+    path: String
+) -> Result<Vec<LinuxFileInfo>, String> {
     validate_path(&path)?;
-    let connection = SSH_CLIENT.get().unwrap().get_connection(&connection_id)
+    let connection = ssh_client.get_connection(&connection_id)
         .ok_or("Connection not found")?;
 
     let mut files = Vec::new();
@@ -118,6 +125,7 @@ pub async fn list_linux_dir(connection_id: String, path: String) -> Result<Vec<L
 
 #[tauri::command]
 pub async fn copy_to_linux(
+    ssh_client: State<'_, SSHClient>,
     connection_id: String,
     local_path: String,
     remote_path: String,
@@ -168,12 +176,13 @@ pub async fn copy_to_linux(
 
 #[tauri::command]
 pub async fn copy_from_linux(
+    ssh_client: State<'_, SSHClient>,
     connection_id: String,
     remote_path: String,
     local_path: String,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let connection = SSH_CLIENT.get().unwrap().get_connection(&connection_id)
+    let connection = ssh_client.get_connection(&connection_id)
         .ok_or("Connection not found")?;
 
     // Open remote file
@@ -229,8 +238,12 @@ pub async fn copy_from_linux(
 }
 
 #[tauri::command]
-pub async fn delete_linux_file(connection_id: String, path: String) -> Result<(), String> {
-    let connection = SSH_CLIENT.get_connection(&connection_id)
+pub async fn delete_linux_file(
+    ssh_client: State<'_, SSHClient>,
+    connection_id: String, 
+    path: String
+) -> Result<(), String> {
+    let connection = ssh_client.get_connection(&connection_id)
         .ok_or("Connection not found")?;
 
     let path = Path::new(&path);
@@ -251,8 +264,12 @@ pub async fn delete_linux_file(connection_id: String, path: String) -> Result<()
 }
 
 #[tauri::command]
-pub async fn get_linux_permissions(connection_id: String, path: String) -> Result<String, String> {
-    let connection = SSH_CLIENT.get_connection(&connection_id)
+pub async fn get_linux_permissions(
+    ssh_client: State<'_, SSHClient>,
+    connection_id: String, 
+    path: String
+) -> Result<String, String> {
+    let connection = ssh_client.get_connection(&connection_id)
         .ok_or("Connection not found")?;
 
     let stat = connection.sftp.stat(Path::new(&path))
@@ -263,6 +280,7 @@ pub async fn get_linux_permissions(connection_id: String, path: String) -> Resul
 
 #[tauri::command]
 pub async fn set_linux_permissions(
+    ssh_client: State<'_, SSHClient>,
     connection_id: String,
     path: String,
     permissions: u32,
@@ -278,13 +296,18 @@ pub async fn set_linux_permissions(
 }
 
 #[tauri::command]
-pub async fn is_ssh_connected(connection_id: String) -> Result<bool, String> {
-    Ok(SSH_CLIENT.get().unwrap().is_connected(&connection_id))
+pub async fn is_ssh_connected(
+    ssh_client: State<'_, SSHClient>,
+    connection_id: String
+) -> Result<bool, String> {
+    Ok(ssh_client.is_connected(&connection_id))
 }
 
 #[tauri::command]
-pub async fn list_ssh_connections() -> Result<Vec<String>, String> {
-    Ok(SSH_CLIENT.get().unwrap().list_connections())
+pub async fn list_ssh_connections(
+    ssh_client: State<'_, SSHClient>
+) -> Result<Vec<String>, String> {
+    Ok(ssh_client.list_connections())
 }
 
 // Helper functions

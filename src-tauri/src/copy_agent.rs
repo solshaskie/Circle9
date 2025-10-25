@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::io::{Read, Write};
-use anyhow::{Result, Context};
+use crate::error::{Circle9Error, Result};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
-use tauri::AppHandle;
-use once_cell::sync::OnceCell;
+use tauri::{AppHandle, State};
+use crate::utils::lock_or_error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferTask {
@@ -80,6 +80,7 @@ impl CopyAgent {
         direction: TransferDirection,
     ) -> Result<String> {
         let task_id = Uuid::new_v4().to_string();
+        tracing::info!("Creating transfer task {}: {} -> {}", task_id, source_path, dest_path);
         let total_bytes = self.get_file_size(&source_path)?;
 
         let task = TransferTask {
@@ -272,8 +273,8 @@ impl CopyAgent {
     }
 
     /// Get transfer progress
-    pub fn get_transfer_progress(&self, task_id: &str) -> Option<TransferProgress {
-        let transfers = self.active_transfers.lock().unwrap();
+    pub fn get_transfer_progress(&self, task_id: &str) -> Option<TransferProgress> {
+        let transfers = lock_or_error(&self.active_transfers).ok()?;
         if let Some(task) = transfers.get(task_id) {
             let percentage = if task.total_bytes > 0 {
                 (task.transferred_bytes as f64 / task.total_bytes as f64) * 100.0
@@ -305,13 +306,13 @@ impl CopyAgent {
 
     /// Get all active transfers
     pub fn get_active_transfers(&self) -> Vec<TransferTask> {
-        let transfers = self.active_transfers.lock().unwrap();
+        let transfers = lock_or_error(&self.active_transfers).unwrap_or_else(|_| return Vec::new());
         transfers.values().cloned().collect()
     }
 
     /// Cancel a transfer
     pub fn cancel_transfer(&self, task_id: &str) -> Result<()> {
-        let mut transfers = self.active_transfers.lock().unwrap();
+        let mut transfers = lock_or_error(&self.active_transfers)?;
         if let Some(task) = transfers.get_mut(task_id) {
             task.status = TransferStatus::Cancelled;
         }
@@ -320,29 +321,31 @@ impl CopyAgent {
 
     /// Retry a failed transfer
     pub fn retry_transfer(&self, task_id: &str) -> Result<()> {
-        let mut transfers = self.active_transfers.lock().unwrap();
+        let mut transfers = lock_or_error(&self.active_transfers)?;
         if let Some(task) = transfers.get_mut(task_id) {
             task.status = TransferStatus::Pending;
             task.error = None;
             task.transferred_bytes = 0;
         }
 
-        {
-            let mut queue = self.transfer_queue.lock().unwrap();
-            queue.push(task_id.to_string());
+        // Send task to queue via channel
+        if let Err(e) = self.sender.send(task_id.to_string()) {
+            tracing::error!("Failed to send task to queue: {}", e);
+        } else {
+            tracing::debug!("Task {} queued for processing", task_id);
         }
 
         Ok(())
     }
 }
 
-// Global copy agent instance
-static COPY_AGENT: OnceCell<CopyAgent> = OnceCell::new();
+// Global copy agent instance removed - using Tauri managed state instead
 
 // Tauri commands for copy operations
 
 #[tauri::command]
 pub async fn create_transfer_task(
+    copy_agent: State<'_, CopyAgent>,
     source_path: String,
     dest_path: String,
     direction: String,
@@ -353,28 +356,39 @@ pub async fn create_transfer_task(
         _ => return Err("Invalid direction".to_string()),
     };
 
-    COPY_AGENT.get().unwrap().create_transfer_task(source_path, dest_path, direction)
+    copy_agent.create_transfer_task(source_path, dest_path, direction)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_transfer_progress(task_id: String) -> Result<Option<TransferProgress>, String> {
-    Ok(COPY_AGENT.get().unwrap().get_transfer_progress(&task_id))
+pub async fn get_transfer_progress(
+    copy_agent: State<'_, CopyAgent>,
+    task_id: String
+) -> Result<Option<TransferProgress>, String> {
+    Ok(copy_agent.get_transfer_progress(&task_id))
 }
 
 #[tauri::command]
-pub async fn get_active_transfers() -> Result<Vec<TransferTask>, String> {
-    Ok(COPY_AGENT.get().unwrap().get_active_transfers())
+pub async fn get_active_transfers(
+    copy_agent: State<'_, CopyAgent>
+) -> Result<Vec<TransferTask>, String> {
+    Ok(copy_agent.get_active_transfers())
 }
 
 #[tauri::command]
-pub async fn cancel_transfer(task_id: String) -> Result<(), String> {
-    COPY_AGENT.get().unwrap().cancel_transfer(&task_id)
+pub async fn cancel_transfer(
+    copy_agent: State<'_, CopyAgent>,
+    task_id: String
+) -> Result<(), String> {
+    copy_agent.cancel_transfer(&task_id)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn retry_transfer(task_id: String) -> Result<(), String> {
-    COPY_AGENT.get().unwrap().retry_transfer(&task_id)
+pub async fn retry_transfer(
+    copy_agent: State<'_, CopyAgent>,
+    task_id: String
+) -> Result<(), String> {
+    copy_agent.retry_transfer(&task_id)
         .map_err(|e| e.to_string())
 }

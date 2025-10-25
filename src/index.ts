@@ -1,10 +1,10 @@
 import { updateTheme } from './Components/Theme/theme';
 import { windowManager } from './Components/Layout/windowManager';
-import { createFivePaneLayout } from './Components/Layout/FivePaneLayout';
+import { createFourPaneLayout } from './Components/Layout/FourPaneLayout';
 import { initializeSSHConnection } from './Service/ssh_state';
 import { initializeTransferQueue } from './Service/transfer_queue';
 import { initializeDragDrop } from './Components/Transfer/DragDropHandler';
-import { initializeConnectionPanel } from './Components/Connection/ConnectionPanel';
+import { initializeSSHConfig } from './Components/Connection/SSHConfig';
 import { initializeStatusBar } from './Components/StatusBar/StatusBar';
 import { initializeWindowsFiles } from './Components/Windows/WindowsFiles';
 import { initializeLinuxFiles } from './Components/Linux/LinuxFiles';
@@ -24,8 +24,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize window manager
     windowManager();
     
-    // Create five-pane layout with terminal log
-    createFivePaneLayout();
+    // Create four-pane layout
+    createFourPaneLayout();
     
     // Initialize SSH connection if auto_connect is enabled
     if (preference?.auto_connect !== false && sshConfig) {
@@ -43,8 +43,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize drag and drop
     initializeDragDrop();
 
-    // Initialize persistent connection panel
-    initializeConnectionPanel();
+    // Initialize SSH configuration UI
+    initializeSSHConfig();
 
     // Initialize status bar
     initializeStatusBar();
